@@ -1,0 +1,14 @@
+# Database connection parameters
+odbc_dsn = "local informix"
+db_username = "informix"
+db_password = "in4mix"
+
+# Query parameters
+selection_query = "SELECT key_field, field1, field2 FROM table_name WHERE condition = 't'"
+update_query_template = "UPDATE table_name SET field1 = 'new_value' WHERE key_field = '{{key}}'"
+batch_size = 100
+timeout_seconds = 30
+
+# File paths and settings
+data_path = "processed_records.json"
+check_again_after = 1800  # 30 minutes in seconds

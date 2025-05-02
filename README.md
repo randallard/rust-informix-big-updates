@@ -20,6 +20,7 @@ This project is a command-line interface (CLI) tool built in Rust that connects 
 - Continuous monitoring mode with configurable check intervals
 - Manual trigger option to restart processing (press 'R')
 - **Default test mode that automatically generates and tests queries**
+- **Test data generation with county and zip code mappings for TDD**
 
 ## Technical Requirements
 
@@ -76,14 +77,16 @@ CREATE TABLE table_name (
     key_field VARCHAR(50) NOT NULL PRIMARY KEY,
     field1 VARCHAR(100),
     field2 VARCHAR(100),
-    condition CHAR(1) DEFAULT 'f'
+    condition CHAR(1) DEFAULT 'f',
+    county VARCHAR(3),
+    zip_code VARCHAR(10)
 );
 -- Insert sample data one row at a time to avoid comma issues
-INSERT INTO table_name VALUES ('key1', 'old_value1', 'data1', 't');
-INSERT INTO table_name VALUES ('key2', 'old_value2', 'data2', 't');
-INSERT INTO table_name VALUES ('key3', 'old_value3', 'data3', 't');
-INSERT INTO table_name VALUES ('key4', 'old_value4', 'data4', 'f');
-INSERT INTO table_name VALUES ('key5', 'old_value5', 'data5', 't');
+INSERT INTO table_name VALUES ('key1', 'old_value1', 'data1', 't', NULL, NULL);
+INSERT INTO table_name VALUES ('key2', 'old_value2', 'data2', 't', NULL, NULL);
+INSERT INTO table_name VALUES ('key3', 'old_value3', 'data3', 't', NULL, NULL);
+INSERT INTO table_name VALUES ('key4', 'old_value4', 'data4', 'f', NULL, NULL);
+INSERT INTO table_name VALUES ('key5', 'old_value5', 'data5', 't', NULL, NULL);
 ```
 
 4. Run the SQL script:
@@ -105,8 +108,8 @@ db_username = "username"
 db_password = "password"
 
 # Query parameters
-selection_query = "SELECT key_field, field1, field2 FROM table_name WHERE condition = 't'"
-update_query_template = "UPDATE table_name SET field1 = '{{new_value}}' WHERE key_field = '{{key}}'"
+selection_query = "SELECT key_field, field1, field2, county, zip_code FROM table_name WHERE condition = 't'"
+update_query_template = "UPDATE table_name SET field1 = '{{new_value}}', county = '{{county}}' WHERE key_field = '{{key}}'"
 batch_size = 100
 timeout_seconds = 30
 
@@ -139,6 +142,15 @@ informix-batch-processor.exe test
 
 # Clean previous result files and run test mode (generate + test)
 informix-batch-processor.exe --clean
+
+# Generate test data with county and zip code mappings (1000 records by default)
+informix-batch-processor.exe setup-test --count 1000
+
+# Clean all test data
+informix-batch-processor.exe clean-test
+
+# Test ZIP to county FIPS code mapping functionality
+informix-batch-processor.exe test-mapping
 ```
 
 For Windows users, a batch file (`run-ibp.bat`) is provided for easy use:
@@ -171,7 +183,13 @@ informix-batch-processor/
 │   │   └── processed.rs
 │   ├── ui/
 │   │   └── progress.rs
-│   └── config.rs
+│   ├── utils/
+│   │   ├── mod.rs
+│   │   └── test_data.rs
+│   ├── tests/
+│   │   └── mod.rs
+│   ├── config.rs
+│   └── zip_county_map.rs
 ├── config.toml
 ├── run-ibp.bat
 ├── setup-deployment.ps1
@@ -222,6 +240,81 @@ The application creates a timestamped directory (`results_[unix_epoch]`) for eac
    }
    ```
 
+## Testing with County and Zip Code Data
+
+A new feature has been added to generate test data that includes county codes and zip codes, which helps simulate real-world scenarios where zip codes need to be matched with county FIPS codes.
+
+### Setting Up Test Data
+
+Before using the test data generation feature, you need to modify your test database schema:
+
+1. Connect to your Informix container:
+   ```bash
+   docker exec -it ifx bash
+   ```
+
+2. Create a SQL script to modify your table (if you didn't include these fields initially):
+   ```sql
+   -- Create file add_county_fields.sql
+   DATABASE stores;
+   ALTER TABLE table_name ADD county VARCHAR(3);
+   ALTER TABLE table_name ADD zip_code VARCHAR(10);
+   ```
+
+3. Run the SQL script:
+   ```bash
+   dbaccess sysmaster add_county_fields.sql
+   ```
+
+### Test Data Generation
+
+The test data generator:
+1. Creates records with random values for most fields
+2. Sets each record's zip_code to a valid zip code from Washington State
+3. Sets the county field to the corresponding FIPS county code
+4. Formats zip codes as 10-character strings with 5-digit zip plus random 4-digit extension
+
+Example test record:
+```
+key_field: 'testkey_123'
+field1: 'value_4567'
+field2: 'data_789'
+condition: 't'
+county: '033'  # Stevens County FIPS code
+zip_code: '99148-1234'  # ZIP code for Stevens County with random extension
+```
+
+This data is ideal for testing the application's ability to correctly handle county code and zip code mappings, which is a common requirement in government data processing applications.
+
+### Development with TDD
+
+To use this feature in a Test-Driven Development workflow:
+
+1. Set up your test database with the required fields
+2. Generate test data using the `setup-test` command
+3. Write tests that verify the application correctly maps ZIP codes to county FIPS codes
+4. Run tests to verify your implementation works correctly
+5. Clean test data using the `clean-test` command when finished
+
+The test data generation leverages the zip_county_map.rs module, which provides a mapping between Washington State ZIP codes and county FIPS codes.
+
+### Example Use Case: Fixing County-Zip Mismatches
+
+A common real-world scenario is where records have incorrect county codes that don't match their zip codes. The test data generator intentionally creates records with the correct mappings, but you can modify it to introduce errors for testing your correction logic.
+
+To test a solution for fixing county-zip mismatches:
+
+1. Generate test data with correct mappings
+2. Run a SQL update to corrupt some of the county values:
+   ```sql
+   -- Corrupt 20% of the county values for testing
+   UPDATE table_name SET county = '001' 
+   WHERE MOD(DBINFO('SQLCA.SQLERRD1'), 5) = 0 AND key_field LIKE 'testkey_%';
+   ```
+3. Develop your solution to detect and fix the mismatches
+4. Test your solution against the corrupted data
+5. Verify that the county codes now match their respective zip codes
+
 ## Interactive Features
 
 - **Batch query generation** now automatically processes all matching records without prompting
@@ -255,27 +348,3 @@ This project includes a utility script to gather all source files into a single 
    - Rename files to preserve directory structure information (e.g., `src/db/connection.rs` becomes `db_connection.rs`)
 
 3. You can now easily upload all files from the `ai-chat-files` directory to an AI assistant for better context when discussing your codebase.
-
-## Example
-
-Original structure:
-```
-src/
-├── main.rs
-├── db/
-│   ├── connection.rs
-│   └── models.rs
-└── utils/
-    └── helpers.rs
-```
-
-After running the script, the `ai-chat-files` directory will contain:
-```
-ai-chat-files/
-├── main.rs
-├── db_connection.rs
-├── db_models.rs
-└── utils_helpers.rs
-```
-
-This flattened structure with descriptive filenames makes it easier to share your codebase context with AI assistants while maintaining information about the original file organization.
