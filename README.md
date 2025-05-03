@@ -21,6 +21,7 @@ This project is a command-line interface (CLI) tool built in Rust that connects 
 - Manual trigger option to restart processing (press 'R')
 - **Default test mode that automatically generates and tests queries**
 - **Test data generation with county and zip code mappings for TDD**
+- **County code correction based on ZIP code mapping (both 2-digit and 3-digit FIPS formats)**
 
 ## Technical Requirements
 
@@ -151,6 +152,12 @@ informix-batch-processor.exe clean-test
 
 # Test ZIP to county FIPS code mapping functionality
 informix-batch-processor.exe test-mapping
+
+# Update county codes based on zip codes (using 3-digit FIPS codes)
+informix-batch-processor.exe update-county-codes
+
+# Update county codes based on zip codes (using 2-digit county codes)
+informix-batch-processor.exe update-county-2digit
 ```
 
 For Windows users, a batch file (`run-ibp.bat`) is provided for easy use:
@@ -240,9 +247,48 @@ The application creates a timestamped directory (`results_[unix_epoch]`) for eac
    }
    ```
 
-## Testing with County and Zip Code Data
+## Working with County and Zip Code Data
 
-A new feature has been added to generate test data that includes county codes and zip codes, which helps simulate real-world scenarios where zip codes need to be matched with county FIPS codes.
+### Washington State ZIP Code to County Code Mapping
+
+This application includes a comprehensive dataset mapping Washington State ZIP codes to:
+
+1. Two-digit county codes (01-39)
+2. Three-digit FIPS county codes (001-077)
+3. County names (e.g., "King County", "Spokane County")
+
+This mapping is used for:
+- Generating test data with correct county codes
+- Updating existing records to ensure county codes match ZIP codes
+- Validating data integrity during processing
+
+### County Code Formats
+
+The application supports two different county code formats:
+
+1. **Two-digit County Codes (01-39)**: These are traditional Washington State county codes used in many legacy systems. Use the `update-county-2digit` command to update records with these codes.
+
+2. **Three-digit FIPS County Codes (001-077)**: These are federal FIPS (Federal Information Processing Standard) county codes that are widely used for interoperability with federal systems. Use the `update-county-codes` command to update records with these codes.
+
+### Test Data Generation
+
+The test data generator:
+1. Creates records with random values for most fields
+2. Sets each record's zip_code to a valid zip code from Washington State
+3. Sets the county field to the corresponding FIPS county code
+4. Formats zip codes as 10-character strings with 5-digit zip plus random 4-digit extension
+
+Example test record:
+```
+key_field: 'testkey_123'
+field1: 'value_4567'
+field2: 'data_789'
+condition: 't'
+county: '033'  # Stevens County FIPS code
+zip_code: '99148-1234'  # ZIP code for Stevens County with random extension
+```
+
+This data is ideal for testing the application's ability to correctly handle county code and zip code mappings, which is a common requirement in government data processing applications.
 
 ### Setting Up Test Data
 
@@ -266,25 +312,56 @@ Before using the test data generation feature, you need to modify your test data
    dbaccess sysmaster add_county_fields.sql
    ```
 
-### Test Data Generation
+### Updating County Codes Based on ZIP Codes
 
-The test data generator:
-1. Creates records with random values for most fields
-2. Sets each record's zip_code to a valid zip code from Washington State
-3. Sets the county field to the corresponding FIPS county code
-4. Formats zip codes as 10-character strings with 5-digit zip plus random 4-digit extension
+The application provides two commands for updating county codes based on ZIP codes:
 
-Example test record:
-```
-key_field: 'testkey_123'
-field1: 'value_4567'
-field2: 'data_789'
-condition: 't'
-county: '033'  # Stevens County FIPS code
-zip_code: '99148-1234'  # ZIP code for Stevens County with random extension
+#### 1. Update with Three-digit FIPS County Codes
+
+```bash
+# Find records with mismatched county codes and update them with FIPS codes
+informix-batch-processor.exe update-county-codes
 ```
 
-This data is ideal for testing the application's ability to correctly handle county code and zip code mappings, which is a common requirement in government data processing applications.
+This command:
+- Scans records with ZIP codes but potentially incorrect county codes
+- Looks up the correct 3-digit FIPS county code for each ZIP code
+- Identifies records where the county code doesn't match the expected FIPS code
+- Generates and executes UPDATE statements to correct these mismatches
+
+#### 2. Update with Two-digit County Codes
+
+```bash
+# Use the selection query from config to update records with 2-digit county codes
+informix-batch-processor.exe update-county-2digit
+```
+
+This command:
+- Uses the selection query from your config file to find relevant records
+- For each record with a ZIP code, looks up the corresponding 2-digit county code
+- Generates SQL UPDATE statements to set the county field to the 2-digit code
+- Prompts you to execute the updates immediately or save them for later
+
+This command is particularly useful for:
+- Legacy systems that use 2-digit county codes instead of FIPS codes
+- Preparing data for integration with other Washington State systems
+- Standardizing county codes across your database
+
+### County Code Conversion Table
+
+Here's a sample of the county code mapping used in the application:
+
+| County Name | 2-Digit Code | FIPS Code |
+|-------------|--------------|-----------|
+| Adams       | 01           | 001       |
+| Asotin      | 02           | 003       |
+| Benton      | 03           | 005       |
+| Chelan      | 04           | 007       |
+| Clallam     | 05           | 009       |
+| King        | 17           | 033       |
+| Pierce      | 27           | 053       |
+| Spokane     | 32           | 063       |
+| Yakima      | 39           | 077       |
 
 ### Development with TDD
 
@@ -314,6 +391,29 @@ To test a solution for fixing county-zip mismatches:
 3. Develop your solution to detect and fix the mismatches
 4. Test your solution against the corrupted data
 5. Verify that the county codes now match their respective zip codes
+
+### Testing County-ZIP Code Correction
+
+To test the county code correction functionality:
+
+1. Generate test data with FIPS county codes
+   ```bash
+   informix-batch-processor.exe setup-test --count 1000
+   ```
+
+2. Use the 2-digit county code update command to convert to 2-digit format
+   ```bash
+   informix-batch-processor.exe update-county-2digit
+   ```
+
+3. Verify that county codes have been updated to 2-digit format
+   ```sql
+   SELECT COUNT(*) FROM table_name 
+   WHERE key_field LIKE 'testkey_%' AND LENGTH(county) = 2;
+   -- Should match the number of test records
+   ```
+
+This workflow allows you to easily convert between different county code formats based on ZIP codes.
 
 ## Interactive Features
 

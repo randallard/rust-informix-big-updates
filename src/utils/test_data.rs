@@ -15,6 +15,7 @@ pub fn generate_test_data(conn: &Connection, count: usize) -> Result<(), Box<dyn
     }
     
     println!("Generating {} test records...", count);
+    log::info!("Generating {} test records with zip codes and county FIPS codes", count);
     
     // Setup random number generator
     let mut rng = rand::thread_rng();
@@ -49,28 +50,39 @@ pub fn generate_test_data(conn: &Connection, count: usize) -> Result<(), Box<dyn
             Ok(_) => {
                 if i % 50 == 0 {
                     println!("Inserted {} records...", i + 1);
+                    log::info!("Inserted record {} with zip code {} and county FIPS code {}", 
+                               key, extended_zip, county_info.fips_code);
                 }
             },
             Err(e) => {
                 eprintln!("Error inserting record {}: {:?}", key, e);
+                log::error!("Error inserting record {}: {:?}", key, e);
                 // Continue with other records even if one fails
             }
         }
     }
     
     println!("Successfully generated {} test records", count);
+    log::info!("Successfully generated {} test records with zip codes and county FIPS codes", count);
     Ok(())
 }
 
 // Function to clean all test data
 pub fn clean_test_data(conn: &Connection) -> Result<(), Box<dyn Error>> {
     println!("Cleaning test data...");
+    log::info!("Cleaning test data with prefix 'testkey_'");
     
     let delete_query = "DELETE FROM table_name WHERE key_field LIKE 'testkey_%'";
     
     match conn.execute(delete_query, ()) {
-        Ok(_) => println!("Successfully cleaned test data"),
-        Err(e) => return Err(format!("Error cleaning test data: {:?}", e).into()),
+        Ok(_) => {
+            println!("Successfully cleaned test data");
+            log::info!("Successfully cleaned all test data records");
+        },
+        Err(e) => {
+            log::error!("Error cleaning test data: {:?}", e);
+            return Err(format!("Error cleaning test data: {:?}", e).into());
+        },
     }
     
     Ok(())

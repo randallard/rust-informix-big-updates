@@ -6,6 +6,7 @@ mod utils;
 mod zip_county_map;
 
 use clap::{Parser, Subcommand};
+use db::query::prompt_user;
 use std::error::Error;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crossterm::event::{self, Event, KeyCode};
@@ -55,6 +56,12 @@ enum Commands {
     
     /// Clean test data
     CleanTest,
+    
+    /// Update county codes based on zip codes (using 3-digit FIPS codes)
+    UpdateCountyCodes,
+    
+    /// Update county codes based on zip codes (using 2-digit county codes)
+    UpdateCounty2Digit,
 }
 
 fn setup_logger(log_file: &str) -> Result<(), Box<dyn Error>> {
@@ -119,8 +126,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     
     // Determine which command to run - default to Test command if none specified
     let command = cli.command.unwrap_or(Commands::Test);
-
-    // Update in main.rs match command section
+    
     match command {
         Commands::Generate => {
             generate_query_phase(&app_config, &results_dir)?;
@@ -142,8 +148,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::CleanTest => {
             clean_test_data(&app_config)?;
         },
+        Commands::UpdateCountyCodes => {
+            update_county_codes(&app_config, &results_dir)?;
+        },
+        Commands::UpdateCounty2Digit => {
+            update_county_2digit(&app_config, &results_dir)?;
+        },
     }
-    
+
     log::info!("Batch processing completed successfully");
     println!("Batch processing completed successfully");
     
@@ -295,6 +307,88 @@ fn clean_test_data(config: &AppConfig) -> Result<(), Box<dyn Error>> {
     
     log::info!("Test data cleaned successfully");
     println!("Test data cleaned successfully");
+    
+    Ok(())
+}
+
+fn update_county_codes(config: &AppConfig, results_dir: &str) -> Result<(), Box<dyn Error>> {
+    println!("Starting County Code Update Phase");
+    log::info!("Starting County Code Update Phase");
+    
+    // Create database connection
+    let connection = create_connection(config)?;
+    
+    // Create progress bar
+    let progress_bar = create_progress_bar("Updating County Codes");
+    
+    // First, find records with mismatched county codes and generate update queries
+    let (checked_count, mismatch_count) = db::query::update_county_by_zip(
+        &connection, config, results_dir, &progress_bar
+    )?;
+    
+    if mismatch_count > 0 {
+        println!("Found {} records with mismatched county codes", mismatch_count);
+        log::info!("Found {} records with mismatched county codes", mismatch_count);
+        
+        // Execute the update queries
+        let (success_count, error_count) = execute_queries(&connection, results_dir, &progress_bar)?;
+        
+        progress_bar.finish_with_message(
+            format!("Updated county codes: {} successful, {} failed", success_count, error_count)
+        );
+        
+        println!("Updated county codes: {} successful, {} failed", success_count, error_count);
+        log::info!("Updated county codes: {} successful, {} failed", success_count, error_count);
+    } else {
+        progress_bar.finish_with_message("No county code updates needed");
+        println!("No county code updates needed. All records have correct county codes.");
+        log::info!("No county code updates needed. All records have correct county codes.");
+    }
+    
+    Ok(())
+}
+
+fn update_county_2digit(config: &AppConfig, results_dir: &str) -> Result<(), Box<dyn Error>> {
+    println!("Starting Two-Digit County Code Update Phase");
+    log::info!("Starting Two-Digit County Code Update Phase");
+    
+    // Create database connection
+    let connection = create_connection(config)?;
+    
+    // Create progress bar
+    let progress_bar = create_progress_bar("Updating Two-Digit County Codes");
+    
+    // Generate update queries for two-digit county codes
+    let (checked_count, updated_count) = db::query::update_county_by_zip_2digit(
+        &connection, config, results_dir, &progress_bar
+    )?;
+    
+    if updated_count > 0 {
+        println!("Generated {} county code update queries from {} records", updated_count, checked_count);
+        log::info!("Generated {} county code update queries from {} records", updated_count, checked_count);
+        
+        // Ask user if they want to execute the queries
+        let response = prompt_user("Do you want to execute the update queries now?");
+        if response.to_uppercase().starts_with('Y') {
+            // Execute the update queries
+            let (success_count, error_count) = execute_queries(&connection, results_dir, &progress_bar)?;
+            
+            progress_bar.finish_with_message(
+                format!("Updated county codes: {} successful, {} failed", success_count, error_count)
+            );
+            
+            println!("Updated county codes: {} successful, {} failed", success_count, error_count);
+            log::info!("Updated county codes: {} successful, {} failed", success_count, error_count);
+        } else {
+            progress_bar.finish_with_message("Update queries generated but not executed");
+            println!("Update queries have been generated but not executed. You can run 'execute' command later to apply them.");
+            log::info!("Update queries generated but not executed");
+        }
+    } else {
+        progress_bar.finish_with_message("No county code updates needed");
+        println!("No county code updates generated. Check your selection query and data.");
+        log::info!("No county code updates generated");
+    }
     
     Ok(())
 }

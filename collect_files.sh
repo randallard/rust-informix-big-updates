@@ -32,7 +32,7 @@ done
 
 cp README.md ai-chat-files
 echo "Copied README.md to ai-chat-files/README.md"
-cp config.toml ai-chat-files
-echo "Copied config.toml to ai-chat-files/config.toml"
+cp "config example.toml" ai-chat-files
+echo "Copied 'config example.toml' to 'ai-chat-files/config example.toml'"
 
 echo "All files have been collected in the ai-chat-files directory."
