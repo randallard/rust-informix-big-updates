@@ -22,6 +22,7 @@ This project is a command-line interface (CLI) tool built in Rust that connects 
 - **Default test mode that automatically generates and tests queries**
 - **Test data generation with county and zip code mappings for TDD**
 - **County code correction based on ZIP code mapping (both 2-digit and 3-digit FIPS formats)**
+- **Improved error handling** - queries that execute successfully but affect no rows are not treated as errors
 
 ## Technical Requirements
 
@@ -201,8 +202,15 @@ informix-batch-processor/
 ├── src/
 │   ├── main.rs
 │   ├── db/
-│   │   ├── connection.rs
-│   │   └── query.rs
+│   │   ├── mod.rs                  # Module definition
+│   │   ├── connection.rs           # Database connection handling
+│   │   ├── query.rs                # Facade for all query functionality
+│   │   ├── query_types.rs          # Core query data structures
+│   │   ├── query_generation.rs     # Query generation logic
+│   │   ├── query_execution.rs      # Query execution logic
+│   │   ├── query_testing.rs        # Query testing and validation
+│   │   ├── county_operations.rs    # County/ZIP code operations
+│   │   └── sql_helpers.rs          # SQL parsing and manipulation helpers
 │   ├── files/
 │   │   ├── json_handler.rs
 │   │   ├── file_manager.rs
@@ -236,7 +244,7 @@ The application creates a timestamped directory (`results_[unix_epoch]`) for eac
      "key": "record_key",
      "query": "UPDATE statement",
      "status": "pending|completed|failed",
-     "result": "success|error: message",
+     "result": "success - operation completed|success - no rows affected|error: message",
      "timestamp": "2025-04-28T14:30:00Z"
    }
    ```
@@ -448,6 +456,17 @@ This workflow allows you to easily convert between different county code formats
 - Failed transactions are rolled back automatically
 - Detailed error information is stored in both the record file and consolidated error log
 - Users can retry failed operations without restarting the entire process
+- **Improved handling of zero-row-affected cases**: When a query executes successfully but affects zero rows, this is now treated as a success rather than an error, with a distinct success message
+
+## Code Organization
+
+The codebase has been restructured to follow a modular design pattern with clear separation of concerns:
+
+- **Facade Pattern**: `db/query.rs` re-exports functionality from specialized modules, maintaining backward compatibility
+- **Single Responsibility**: Each module has a specific, focused purpose
+- **Organized Functionality**: Related code is grouped together for better maintainability
+- **Improved Error Handling**: Clear distinction between actual errors and zero-affected-rows cases
+- **Reduced File Sizes**: Breaking up large files makes the code easier to understand and maintain
 
 # AI Chat File Collection
 
