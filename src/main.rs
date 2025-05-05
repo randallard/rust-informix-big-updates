@@ -61,7 +61,7 @@ enum Commands {
     UpdateCountyCodes,
     
     /// Update county codes based on zip codes (using 2-digit county codes)
-    UpdateCounty2Digit,
+    UpdateCountyCodeFromCountyfp,
 }
 
 fn setup_logger(log_file: &str) -> Result<(), Box<dyn Error>> {
@@ -151,8 +151,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::UpdateCountyCodes => {
             update_county_codes(&app_config, &results_dir)?;
         },
-        Commands::UpdateCounty2Digit => {
-            update_county_2digit(&app_config, &results_dir)?;
+        Commands::UpdateCountyCodeFromCountyfp => {  
+            update_county_code_from_countyfp(&app_config, &results_dir)?;  
         },
     }
 
@@ -348,18 +348,18 @@ fn update_county_codes(config: &AppConfig, results_dir: &str) -> Result<(), Box<
     Ok(())
 }
 
-fn update_county_2digit(config: &AppConfig, results_dir: &str) -> Result<(), Box<dyn Error>> {
-    println!("Starting Two-Digit County Code Update Phase");
-    log::info!("Starting Two-Digit County Code Update Phase");
+fn update_county_code_from_countyfp(config: &AppConfig, results_dir: &str) -> Result<(), Box<dyn Error>> {
+    println!("Starting County Code Update from FIPS Phase");
+    log::info!("Starting County Code Update from FIPS Phase");
     
     // Create database connection
     let connection = create_connection(config)?;
     
     // Create progress bar
-    let progress_bar = create_progress_bar("Updating Two-Digit County Codes");
+    let progress_bar = create_progress_bar("Updating County Codes from FIPS");
     
     // Generate update queries for two-digit county codes
-    let (checked_count, updated_count) = db::query::update_county_by_zip_2digit(
+    let (checked_count, updated_count) = db::query::update_county_code_from_countyfp(
         &connection, config, results_dir, &progress_bar
     )?;
     

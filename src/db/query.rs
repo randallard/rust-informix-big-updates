@@ -8,8 +8,10 @@ use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
+use crate::db::connection::create_connection;
 use crate::files::json_handler::{save_query_file, read_query_files, save_error_file};
 use crate::ui;
+use crate::ui::progress::create_progress_bar;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum QueryStatus {
@@ -326,15 +328,37 @@ pub fn execute_queries(
         // Update progress bar message
         ui::progress::update_message(progress_bar, format!("Executing query for key: {}", query_record.key));
         
-        // Execute the query directly (no transaction)
+        // Execute the query
         let current_time = Utc::now().to_rfc3339();
         match conn.execute(&query_record.query, ()) {
-            Ok(_) => {
-                // Update query record with success result
+            Ok(Some(_cursor)) => {
+                // For UPDATE, INSERT, DELETE, assume success if we got a cursor without error
+                // Success case - we assume 1 row was affected
                 query_record.status = QueryStatus::Completed;
-                query_record.result = Some("success".to_string());
+                query_record.result = Some("success - operation completed".to_string());
                 query_record.timestamp = Some(current_time.clone());
                 success_count += 1;
+                
+                log::info!("Query execution successful for key {}", query_record.key);
+            },
+            Ok(None) => {
+                // No cursor returned, but no error - could be 0 rows affected
+                query_record.status = QueryStatus::Failed;
+                query_record.result = Some("error: No rows updated".to_string());
+                query_record.timestamp = Some(current_time.clone());
+                
+                // Add to error log
+                let error_record = ErrorRecord {
+                    key: query_record.key.clone(),
+                    file: file_path.file_name().unwrap().to_string_lossy().to_string(),
+                    error: "Expected 1 row to be updated, but 0 rows were affected".to_string(),
+                    timestamp: current_time.clone(),
+                };
+                
+                save_error_file(&format!("{}/errors.json", results_dir), &error_record)?;
+                error_count += 1;
+                
+                log::error!("Query execution failed for key {}: No rows updated", query_record.key);
             },
             Err(err) => {
                 // Update query record with error result
@@ -347,7 +371,7 @@ pub fn execute_queries(
                     key: query_record.key.clone(),
                     file: file_path.file_name().unwrap().to_string_lossy().to_string(),
                     error: format!("{:?}", err),
-                    timestamp: current_time,
+                    timestamp: current_time.clone(),
                 };
                 
                 save_error_file(&format!("{}/errors.json", results_dir), &error_record)?;
@@ -369,8 +393,6 @@ pub fn execute_queries(
     
     Ok((success_count, error_count))
 }
-
-// Add this function to db/query.rs
 
 pub fn update_county_by_zip(
     conn: &Connection,
@@ -479,27 +501,25 @@ pub fn update_county_by_zip(
     Ok((count, mismatch_count))
 }
 
-// Add this function to db/query.rs
-
-pub fn update_county_by_zip_2digit(
+pub fn update_county_code_from_countyfp(
     conn: &Connection,
     config: &AppConfig,
     results_dir: &str,
     progress_bar: &ProgressBar,
 ) -> Result<(usize, usize), Box<dyn Error>> {
-    ui::progress::print_with_progress(progress_bar, "Finding records with zip codes to update county codes...");
+    ui::progress::update_message(progress_bar, "Finding records with county codes to update...");
     
     // Load the zip-county mapping
     let zip_county_map = crate::zip_county_map::load_zip_county_map();
     
-    // Use the selection query from config
+    // Query to find records with zip codes but potentially incorrect county codes
     let selection_query = &config.selection_query;
     
     // Execute the selection query
     let cursor = match conn.execute(selection_query, ())? {
         Some(cursor) => cursor,
         None => {
-            ui::progress::print_with_progress(progress_bar, "No records found matching the selection query.");
+            ui::progress::print_with_progress(progress_bar, "No records found with selection query.");
             log::warn!("Selection query returned no results");
             return Ok((0, 0));
         }
@@ -510,52 +530,71 @@ pub fn update_county_by_zip_2digit(
     let mut row_set_cursor = cursor.bind_buffer(&mut buffers)?;
     
     let mut count = 0;
-    let mut updated_count = 0;
+    let mut mismatch_count = 0;
     let mut total_records = 0;
     
-    ui::progress::print_with_progress(progress_bar, "Generating update queries for county codes...");
+    ui::progress::print_with_progress(progress_bar, "Generating update queries for records with county codes...");
     
     // Process each batch of rows
     while let Some(batch) = row_set_cursor.fetch()? {
         total_records += batch.num_rows();
         progress_bar.set_length(total_records as u64);
         
+        // Parse column indices from the selection query
+        let key_col_idx = find_column_index_by_name(&config.selection_query, &config.key_field_name);
+        let county_col_idx = find_column_index_by_name(&config.selection_query, &config.county_field_name);
+        let zip_col_idx = find_column_index_by_name(&config.selection_query, &config.zip_field_name);
+        
+        log::info!("Using column indices: key_field={}, county_field={}, zip_field={}",
+                  key_col_idx, county_col_idx, zip_col_idx);
+        
         for row_index in 0..batch.num_rows() {
             progress_bar.set_position(count as u64);
             
-            // Find the column index for key_field and zip_code
-            let key_field_idx = find_column_index(&batch, "key_field").unwrap_or(0);
-            let zip_code_idx = find_column_index(&batch, "zip_code");
+            // Get key field value (always use the first column as the key)
+            let key_field = String::from_utf8_lossy(batch.at(key_col_idx, row_index).unwrap_or(&[])).to_string();
             
-            // Get key field value
-            let key_field = String::from_utf8_lossy(batch.at(key_field_idx, row_index).unwrap_or(&[])).to_string();
+            // Get zip code and current county code from the determined column indices
+            let zip_code = String::from_utf8_lossy(batch.at(zip_col_idx, row_index).unwrap_or(&[])).to_string();
+            let current_county = String::from_utf8_lossy(batch.at(county_col_idx, row_index).unwrap_or(&[])).to_string();
+            
+            // Skip if no zip code
+            if zip_code.is_empty() {
+                continue;
+            }
+            
+            // Extract 5-digit zip from zip+4 if needed
+            let zip5 = if zip_code.contains('-') {
+                zip_code.split('-').next().unwrap_or("").to_string()
+            } else if zip_code.len() >= 5 {
+                zip_code[0..5].to_string()
+            } else {
+                zip_code.clone()
+            };
             
             // Update progress bar message but don't print to console
-            ui::progress::update_message(progress_bar, format!("Processing key: {}", key_field));
+            ui::progress::update_message(progress_bar, 
+                format!("Checking key: {}, zip: {}, county: {}", key_field, zip5, current_county));
             
-            // Only proceed if zip_code column was found
-            if let Some(zip_idx) = zip_code_idx {
-                // Get zip code
-                let zip_code = String::from_utf8_lossy(batch.at(zip_idx, row_index).unwrap_or(&[])).to_string();
+            // Look up the correct county code for this zip
+            if let Some(zip_info) = zip_county_map.get(&zip5) {
+                let correct_county_code = &zip_info.county_code;
                 
-                // Extract 5-digit zip from zip+4 if needed
-                let zip5 = if zip_code.contains('-') {
-                    zip_code.split('-').next().unwrap_or("").to_string()
-                } else if zip_code.len() >= 5 {
-                    zip_code[0..5].to_string()
-                } else {
-                    zip_code.clone()
-                };
-                
-                // Look up the county code for this zip
-                if let Some(zip_info) = zip_county_map.get(&zip5) {
-                    // Get the two-digit county code
-                    let county_code = &zip_info.county_code;
+                // Only generate update query if county code doesn't match the correct county code
+                if current_county != *correct_county_code {
+                    mismatch_count += 1;
                     
-                    // Generate update query
+                    // Generate update query using the table name from the selection_query
+                    let table_name = extract_table_name(&config.selection_query);
+                    
+                    // Generate update query with the correct field names from config
                     let query = format!(
-                        "UPDATE table_name SET county = '{}' WHERE key_field = '{}'",
-                        county_code, key_field
+                        "UPDATE {} SET {} = '{}' WHERE {} = '{}'",
+                        table_name, 
+                        config.county_field_name,
+                        correct_county_code, 
+                        config.key_field_name, 
+                        key_field
                     );
                     
                     // Create query record
@@ -571,14 +610,9 @@ pub fn update_county_by_zip_2digit(
                     let file_path = format!("{}/{}.json", results_dir, key_field);
                     save_query_file(&file_path, &query_record)?;
                     
-                    updated_count += 1;
-                    log::info!("Generated update query for key: {}, setting county code to '{}' based on zip code {}", 
-                               key_field, county_code, zip5);
-                } else {
-                    log::warn!("No county code mapping found for zip code: {}", zip5);
+                    log::info!("Generated update query for key: {}, changing county from '{}' to '{}' where zip starts with '{}'", 
+                              key_field, current_county, correct_county_code, zip5);
                 }
-            } else {
-                log::warn!("No zip_code column found in the result set");
             }
             
             count += 1;
@@ -586,11 +620,102 @@ pub fn update_county_by_zip_2digit(
     }
     
     // Print summary
-    let summary = format!("Processed {} records, generated {} county code update queries", count, updated_count);
+    let summary = format!("Checked {} records, found {} with county codes to update", count, mismatch_count);
     ui::progress::print_with_progress(progress_bar, &format!("\x1b[32m{}\x1b[0m", summary));
     log::info!("{}", summary);
     
-    Ok((count, updated_count))
+    Ok((count, mismatch_count))
+}
+
+// Helper function to find column index by position (for key field)
+fn find_column_index_by_position(batch: &TextRowSet, default_position: usize) -> usize {
+    // Return the default position, but make sure it's within the valid range
+    let num_cols = batch.num_cols();
+    if default_position < num_cols {
+        default_position
+    } else {
+        0 // Fallback to first column if default is out of range
+    }
+}
+
+// Find column index based on field name and query structure
+fn find_column_index_by_name(query: &str, field_name: &str) -> usize {
+    // Parse the SELECT statement to extract column names
+    if let Some(select_pos) = query.to_uppercase().find("SELECT ") {
+        if let Some(from_pos) = query.to_uppercase().find(" FROM ") {
+            let columns_str = &query[(select_pos + 7)..from_pos];
+            let columns: Vec<&str> = columns_str.split(',').map(|s| s.trim()).collect();
+            
+            // Find the position of the field name in the columns list
+            for (i, col) in columns.iter().enumerate() {
+                // Check if the column name exactly matches the field name
+                // or if it ends with the field name (e.g., "table.field_name")
+                if col.to_lowercase() == field_name.to_lowercase() || 
+                   col.to_lowercase().ends_with(&format!(".{}", field_name.to_lowercase())) {
+                    return i;
+                }
+            }
+            
+            // If we got here, the field name wasn't found in the columns
+            panic!("Field name '{}' not found in SELECT statement: {}", field_name, columns_str);
+        } else {
+            panic!("Invalid SELECT statement: FROM clause not found in query: {}", query);
+        }
+    } else {
+        panic!("Invalid query: SELECT statement not found in query: {}", query);
+    }
+}
+
+// Helper function to find column index by data pattern or position
+fn find_column_index_by_pattern(batch: &TextRowSet, field_name: &str, default_position: usize) -> usize {
+    let num_cols = batch.num_cols();
+    
+    // If the default position is valid, use it as a fallback
+    let fallback = if default_position < num_cols { default_position } else { 0 };
+    
+    // For zip fields, look for a column that contains zip-like data (5 digits, maybe a dash)
+    if field_name.contains("zip") && batch.num_rows() > 0 {
+        for i in 0..num_cols {
+            let value = String::from_utf8_lossy(batch.at(i, 0).unwrap_or(&[])).to_string();
+            if value.len() >= 5 && value.chars().take(5).all(|c| c.is_digit(10)) {
+                return i;
+            }
+        }
+    }
+    
+    // For county fields, look for a column with values that match county code patterns (2-3 digits)
+    if field_name.contains("county") && batch.num_rows() > 0 {
+        for i in 0..num_cols {
+            let value = String::from_utf8_lossy(batch.at(i, 0).unwrap_or(&[])).to_string();
+            if (value.len() == 2 || value.len() == 3) && value.chars().all(|c| c.is_digit(10)) {
+                return i;
+            }
+        }
+    }
+    
+    // If we couldn't identify the column by pattern, return the fallback position
+    fallback
+}
+
+// Extract table name from SQL query
+fn extract_table_name(query: &str) -> String {
+    // Simple implementation to extract table name from SELECT query
+    // Example: "SELECT field1, field2 FROM table_name WHERE condition"
+    let query = query.trim().to_uppercase();
+    
+    if let Some(from_pos) = query.find(" FROM ") {
+        let after_from = &query[from_pos + 6..];
+        if let Some(where_pos) = after_from.find(" WHERE ") {
+            return after_from[..where_pos].trim().to_string();
+        } else if let Some(limit_pos) = after_from.find(" LIMIT ") {
+            return after_from[..limit_pos].trim().to_string();
+        } else {
+            return after_from.trim().to_string();
+        }
+    }
+    
+    // Fallback to "table_name" if we can't extract it
+    "table_name".to_string()
 }
 
 // Helper function to find column index by name - more robust approach

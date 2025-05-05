@@ -104,13 +104,18 @@ The application can be configured using a `config.toml` file:
 
 ```toml
 # Database connection parameters
-odbc_dsn = "UJMS Live"
-db_username = "username"
-db_password = "password"
+odbc_dsn = "local informix"
+db_username = "informix"
+db_password = "in4mix"
+
+# Field name mappings for your schema
+key_field_name = "key_field"
+zip_field_name = "zip_code"
+county_field_name = "county"
 
 # Query parameters
-selection_query = "SELECT key_field, field1, field2, county, zip_code FROM table_name WHERE condition = 't'"
-update_query_template = "UPDATE table_name SET field1 = '{{new_value}}', county = '{{county}}' WHERE key_field = '{{key}}'"
+selection_query = "SELECT key_field, field1, field2 FROM table_name WHERE condition = 't'"
+update_query_template = "UPDATE table_name SET field1 = 'new_value' WHERE key_field = '{{key}}'"
 batch_size = 100
 timeout_seconds = 30
 
@@ -119,7 +124,21 @@ data_path = "processed_records.json"
 check_again_after = 1800  # 30 minutes in seconds
 ```
 
-Alternatively, you can use environment variables with the `IBP_` prefix (e.g., `IBP_ODBC_DSN`).
+Alternatively, you can use environment variables with the `IBP_` prefix (e.g., `IBP_ODBC_DSN`, `IBP_KEY_FIELD_NAME`).
+
+The configuration structure supports:
+
+- **Database connection**: ODBC DSN, username, and password
+- **Field mapping**: Customize field names for your schema (key_field_name, zip_field_name, county_field_name)
+- **Query parameters**: Define selection and update query templates with placeholders
+- **Batch processing**: Configure batch size and timeout
+- **File management**: Data path for processed records
+- **Operation interval**: Delay between checks in continuous mode
+
+Configuration values are loaded with the following priority:
+1. Environment variables (with IBP_ prefix)
+2. Config file values (config.toml)
+3. Default values defined in the code
 
 ## Usage
 
@@ -150,14 +169,11 @@ informix-batch-processor.exe setup-test --count 1000
 # Clean all test data
 informix-batch-processor.exe clean-test
 
-# Test ZIP to county FIPS code mapping functionality
-informix-batch-processor.exe test-mapping
-
 # Update county codes based on zip codes (using 3-digit FIPS codes)
 informix-batch-processor.exe update-county-codes
 
 # Update county codes based on zip codes (using 2-digit county codes)
-informix-batch-processor.exe update-county-2digit
+informix-batch-processor.exe update-county-code-from-countyfp
 ```
 
 For Windows users, a batch file (`run-ibp.bat`) is provided for easy use:
@@ -170,6 +186,9 @@ set IBP_DB_USERNAME=username
 set IBP_DB_PASSWORD=password
 set IBP_DATA_PATH=processed_records.json
 set IBP_CHECK_AGAIN_AFTER=1800
+set IBP_KEY_FIELD_NAME=key_field
+set IBP_ZIP_FIELD_NAME=zip_code
+set IBP_COUNTY_FIELD_NAME=county
 
 REM Run the application (will default to test mode)
 informix-batch-processor.exe
@@ -266,7 +285,7 @@ This mapping is used for:
 
 The application supports two different county code formats:
 
-1. **Two-digit County Codes (01-39)**: These are traditional Washington State county codes used in many legacy systems. Use the `update-county-2digit` command to update records with these codes.
+1. **Two-digit County Codes (01-39)**: These are traditional Washington State county codes used in many legacy systems. Use the `update-county-code-from-countyfp` command to update records with these codes.
 
 2. **Three-digit FIPS County Codes (001-077)**: These are federal FIPS (Federal Information Processing Standard) county codes that are widely used for interoperability with federal systems. Use the `update-county-codes` command to update records with these codes.
 
@@ -319,7 +338,7 @@ The application provides two commands for updating county codes based on ZIP cod
 #### 1. Update with Three-digit FIPS County Codes
 
 ```bash
-# Find records with mismatched county codes and update them with FIPS codes
+# Update county codes based on zip codes (using 3-digit FIPS county codes)
 informix-batch-processor.exe update-county-codes
 ```
 
@@ -333,7 +352,7 @@ This command:
 
 ```bash
 # Use the selection query from config to update records with 2-digit county codes
-informix-batch-processor.exe update-county-2digit
+informix-batch-processor.exe update-county-code-from-countyfp
 ```
 
 This command:
@@ -403,7 +422,7 @@ To test the county code correction functionality:
 
 2. Use the 2-digit county code update command to convert to 2-digit format
    ```bash
-   informix-batch-processor.exe update-county-2digit
+   informix-batch-processor.exe update-county-code-from-countyfp
    ```
 
 3. Verify that county codes have been updated to 2-digit format

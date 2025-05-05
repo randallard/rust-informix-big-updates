@@ -3,6 +3,11 @@ odbc_dsn = "local informix"
 db_username = "informix"
 db_password = "in4mix"
 
+# Field name mappings for your schema
+key_field_name = "key_field"
+zip_field_name = "zip_code"
+county_field_name = "county"
+
 # Query parameters
 selection_query = "SELECT key_field, field1, field2 FROM table_name WHERE condition = 't'"
 update_query_template = "UPDATE table_name SET field1 = 'new_value' WHERE key_field = '{{key}}'"
