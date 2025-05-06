@@ -5,6 +5,8 @@
 
 This utility connects to an Informix database via ODBC to perform batch updates on records. It can identify records that need updates, generate SQL queries, test them for syntax errors, and execute them with transaction support.
 
+Check out the repo at https://github.com/randallard/rust-informix-big-updates
+
 ## Requirements
 
 Before using this tool, ensure your system has:
