@@ -1,5 +1,22 @@
 # Rust CLI Informix ODBC Batch Processor
 
+## Table of Contents
+1. [Project Overview](#project-overview)
+2. [Key Features](#key-features)
+3. [Technical Requirements](#technical-requirements)
+4. [Installation](#installation)
+5. [Deployment Instructions](#deployment-instructions)
+6. [Development Environment](#development-environment)
+7. [Configuration](#configuration)
+8. [Usage](#usage)
+9. [Project Structure](#project-structure)
+10. [Output Files](#output-files)
+11. [Working with County and Zip Code Data](#working-with-county-and-zip-code-data)
+12. [Interactive Features](#interactive-features)
+13. [Error Handling](#error-handling)
+14. [Code Organization](#code-organization)
+15. [AI Chat File Collection](#ai-chat-file-collection)
+
 ## Project Overview
 
 This project is a command-line interface (CLI) tool built in Rust that connects to an Informix database via ODBC to perform batch updates on records. The tool follows a multi-phase approach:
@@ -45,6 +62,53 @@ cargo build --release --target i686-pc-windows-msvc
 
 4. Run the setup script to create deployment files:
 
+```bash
+powershell -ExecutionPolicy Bypass -File setup-deployment.ps1
+```
+
+## Deployment Instructions
+
+To deploy the application to another machine:
+
+1. **Compile the executable** using one of these methods:
+   ```bash
+   # For standard 64-bit build
+   cargo build --release
+   
+   # For 32-bit build (if using 32-bit ODBC drivers)
+   cargo build --release --target i686-pc-windows-msvc
+   ```
+
+2. **Create a deployment package** containing:
+   - The executable (`target/release/informix-batch-processor.exe`)
+   - A sample `config.toml` file (or use the batch file method)
+   - The `run-ibp.bat` batch file (for Windows)
+   - This README file
+
+3. **Set up the target machine**:
+   - Ensure the Informix ODBC driver is installed
+   - Configure ODBC Data Source in Windows ODBC Data Source Administrator:
+     1. Open ODBC Data Source Administrator (32-bit or 64-bit, depending on your driver)
+     2. Go to "System DSN" tab and click "Add"
+     3. Select the Informix ODBC driver and click "Finish"
+     4. Configure the connection parameters:
+        - Data Source Name: Enter the same name you'll use in your config
+        - Server: Your Informix server name
+        - Service: Informix service port (typically 9088)
+        - Protocol: TCP/IP
+        - Database: Your database name
+     5. Test the connection before saving
+
+4. **Configure the application** using one of these methods:
+   - Create a `config.toml` file in the same directory as the executable
+   - Set environment variables with the `IBP_` prefix
+   - Edit the `run-ibp.bat` batch file with your specific settings
+
+5. **Run the application**:
+   - Double-click the `run-ibp.bat` file, or
+   - Run from command line: `informix-batch-processor.exe [command] [options]`
+
+For automated deployment, use the included PowerShell script:
 ```bash
 powershell -ExecutionPolicy Bypass -File setup-deployment.ps1
 ```
@@ -468,12 +532,12 @@ The codebase has been restructured to follow a modular design pattern with clear
 - **Improved Error Handling**: Clear distinction between actual errors and zero-affected-rows cases
 - **Reduced File Sizes**: Breaking up large files makes the code easier to understand and maintain
 
-# AI Chat File Collection
+## AI Chat File Collection
 
-## Overview
+### Overview
 This project includes a utility script to gather all source files into a single directory for easier sharing with AI assistants. This simplifies the process of providing context about your codebase when working with AI tools.
 
-## Usage
+### Usage
 
 1. Run the collection script from the project root:
    ```bash
